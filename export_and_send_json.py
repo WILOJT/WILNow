@@ -6,7 +6,7 @@ from datetime import date, datetime  # Import date and datetime
 
 def send_data():
     try:
-        ws = websocket.create_connection("ws://localhost:3001")  # Connect to WebSocket
+        ws = websocket.create_connection("wss://wsserver-production-afea.up.railway.app")  # Connect to WebSocket
 
         while True:
             try:
@@ -66,7 +66,7 @@ def send_data():
             except Exception as e:
                 print("❌ Unexpected Error:", e)
 
-            time.sleep(10)  # Wait before sending the next batch
+            time.sleep(30)  # Wait before sending the next batch
 
     except Exception as e:
         print("❌ WebSocket Connection Error:", e)
