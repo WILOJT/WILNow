@@ -1,74 +1,75 @@
-import pandas as pd
-import mysql.connector
-import requests
+import json
 import time
+import mysql.connector
+import websocket
+from datetime import date, datetime  # Import date and datetime
 
-while True:
+def send_data():
     try:
-        # 1️⃣ Establish database connection
-        conn = mysql.connector.connect(
-            host="127.0.0.1",
-            user="root",
-            password="",
-            database="asd",
-            charset="utf8mb4",
-            collation="utf8mb4_general_ci"
-        )
+        ws = websocket.create_connection("ws://localhost:3001")  # Connect to WebSocket
 
-        # 2️⃣ Create a cursor
-        cursor = conn.cursor()
+        while True:
+            try:
+                conn = mysql.connector.connect(
+                    host="127.0.0.1",
+                    user="root",
+                    password="",
+                    database="wilms-server_db",
+                    charset="utf8mb4",
+                    collation="utf8mb4_general_ci"
+                )
+                cursor = conn.cursor()
 
-        # 3️⃣ Write your SQL query
-        query = ("""
-            SELECT
-                f.id AS facilityID,
-                b.date,
-                TIME_FORMAT(b.startTime, '%H:%i:%s') AS startTime,
-                TIME_FORMAT(b.endTime, '%H:%i:%s') AS endTime,
-                f.facilityname,
-                b.description,
-                b.headcount,
-                b.isFacilityBooked,
-                f.capacity
-            FROM api_booking AS b
-            JOIN facility_facility AS f
-            ON b.venue_id = f.id
-            WHERE b.status = 'BOOKED' OR b.status = 'ONGOING'
-            ORDER BY b.date ASC, b.startTime ASC
-        """)
+                # 🔹 Query 1: Get ongoing/booked bookings
+                booking_query = """
+                    SELECT f.id AS facilityID, b.date, 
+                        TIME_FORMAT(b.startTime, '%H:%i:%s') AS start, 
+                        TIME_FORMAT(b.endTime, '%H:%i:%s') AS end, 
+                        f.facilityName, b.description AS title, 
+                        b.headcount, b.isFacilityBooked
+                    FROM api_booking AS b 
+                    JOIN facility_facility AS f ON b.venue_id = f.id 
+                    WHERE (b.status = 'BOOKED' OR b.status = 'ONGOING') 
+                    AND DATE(b.date) >= CURDATE() 
+                    ORDER BY b.date ASC, b.startTime ASC
+                """
+                cursor.execute(booking_query)
+                booking_rows = cursor.fetchall()
+                booking_columns = [desc[0] for desc in cursor.description]
+                bookings_json = [dict(zip(booking_columns, row)) for row in booking_rows]
 
-        # 4️⃣ Execute query and fetch results
-        cursor.execute(query)
-        rows = cursor.fetchall()
+                # 🔹 Query 2: Get all facilities
+                facility_query = """
+                    SELECT id AS facilityID, facilityname, capacity, is_conference FROM facility_facility WHERE isdeleted = 0
+                """
+                cursor.execute(facility_query)
+                facility_rows = cursor.fetchall()
+                facility_columns = [desc[0] for desc in cursor.description]
+                facilities_json = [dict(zip(facility_columns, row)) for row in facility_rows]
 
-        # 5️⃣ Get column names
-        columns = [desc[0] for desc in cursor.description]
+                # 🔹 Combine both results into a final JSON structure
+                final_json = {
+                    "bookings": bookings_json,
+                    "facilities": facilities_json
+                }
 
-        # 6️⃣ Read data into a Pandas DataFrame
-        df = pd.DataFrame(rows, columns=columns)
+                json_data = json.dumps(final_json, indent=4, default=str)  # Convert to JSON
 
-        # 7️⃣ Convert DataFrame to JSON
-        json_data = df.to_json(orient="records", indent=4)
-        print(json_data)
+                ws.send(json_data)  # Send data through WebSocket
+                print("✅ Sent data to WebSocket server:", json_data)
 
-        # 8️⃣ Send JSON data to Vercel API
-        url = "https://your-vercel-app.vercel.app/api/updateData"  # Update with your Vercel API URL
-        data = {"data": json_data}  # Append actual JSON data
+                cursor.close()
+                conn.close()
 
-        try:
-            response = requests.post(url, json=data, headers={"Content-Type": "application/json"})
-            print("Response:", response.json())
-        except requests.exceptions.RequestException as e:
-            print("Error sending data:", e)
+            except mysql.connector.Error as db_err:
+                print("❌ Database Error:", db_err)
+            except Exception as e:
+                print("❌ Unexpected Error:", e)
 
-        # 9️⃣ Close the database connection
-        cursor.close()
-        conn.close()
+            time.sleep(10)  # Wait before sending the next batch
 
-    except mysql.connector.Error as db_err:
-        print("Database Error:", db_err)
     except Exception as e:
-        print("Unexpected Error:", e)
+        print("❌ WebSocket Connection Error:", e)
 
-    #  🔄 Wait for 5 minutes before running again
-    time.sleep(300)
+if __name__ == "__main__":
+    send_data()
